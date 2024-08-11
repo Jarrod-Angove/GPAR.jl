@@ -1,3 +1,2 @@
-using KernelAbstractions, AMDGPU
-
+using KernelAbstractions, AMDGPU, GPAR
 
