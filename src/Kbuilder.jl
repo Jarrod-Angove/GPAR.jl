@@ -66,33 +66,60 @@ export build_tensor_cpu
 
 # Untested!!!
 function build_K(X, t, θ)
+    #TODO: Add signal noise
+    backend=KernelAbstractions.get_backend(X)
+    n, N = size(X)
+    nzeros = KernelAbstractions.zeros(backend, Float32, N,N)
+    noise_tensor = repeat(nzeros + I.*θ[3], 1, 1, n)
+    σ = θ[1]; l = θ[2];
     dt = diff(t); 
-    for i in eachindex(dt)
-        if dt[i] !== dt[1]
+    dtc = Array(dt)
+    for i in eachindex(dtc)
+        if dtc[i] !== dtc[1]
             throw("Times are not evenly spaced")
         end
     end
-    Δt = dt[1]
+    Δt = dtc[1]
     T = build_tensor(X, Δt)
-    K = θ[1]^2 .* exp.(-0.5 .* T ./θ[2]^2)
+    K = σ^2 .* exp.(-0.5 .* T ./l^2) .+ noise_tensor
     return K
 end
+export build_K
 
 # UNOPTIMIZED and untested!!!!!
+# Look into Krylov.jl for generating α
 function lml_K(X, Y, t, θ)
     n, N = size(X)
     K = build_K(X, t, θ)
+
     # Might want to move everything to shared memory here
-    logp = Vector{Float32}(undef, n)
+    logp_v = Vector{Float32}(undef, n)
     for k in 1:n
         y = Y[k, :]
-        L = cholesky(K[:,:,k])
-        α = L.U \ (L.L \ y)
-        logp[k] = -0.5 .* y' * α .- tr(L.L) .- n/2 * log(2π)
+        nK = K[:, :, k]
+        try
+           lp = logp(nK, y, N)
+           logp_v[k] = lp
+        catch err
+            logp_v[k] = -1000000.0
+            println("timestep $k failed -- probably due to posdef error")
+            println(err)
+        end
     end
-    return logp
+    return -sum(logp_v)
 end
+export lml_K
 
+function logp(k, y, N)
+    L = cholesky(k)
+    α = L.U \ (L.L \ y)
+    p = -0.5 * y' * α - tr(L.L) - N/2 * log(2π)
+    return p
+end
+export logp
 
-
+function build_loss_function(X, Y, t)
+    return loss(θ, p) = lml_K(X, Y, t, θ)
+end
+export build_loss_function
 
